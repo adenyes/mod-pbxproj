@@ -45,8 +45,8 @@ import uuid
 from UserDict import IterableUserDict
 from UserList import UserList
 
-regex = '[a-zA-Z0-9\\._/-]*'
-
+regex = '[a-zA-Z0-9\\._/]*'
+PROJECT_NAME = 'Project' # don't know where to get this, set it manually.
 
 class PBXEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -350,6 +350,8 @@ class PBXGroup(PBXType):
 
         return grp
 
+class XCVersionGroup(PBXType):
+    pass
 
 class PBXNativeTarget(PBXType):
     pass
@@ -1155,6 +1157,9 @@ class XcodeProject(PBXDict):
         objs = self.data.get('objects')
         sections = dict()
         uuids = dict()
+        sources = set()
+        resources = set()
+        frameworks = set()
 
         for key in objs:
             l = list()
@@ -1170,15 +1175,36 @@ class XcodeProject(PBXDict):
             elif 'path' in objs.get(key):
                 uuids[key] = objs.get(key).get('path')
             else:
-                if objs.get(key).get('isa') == 'PBXProject':
-                    uuids[objs.get(key).get('buildConfigurationList')] = 'Build configuration list for PBXProject "Unity-iPhone"'
-                elif objs.get(key).get('isa')[0:3] == 'PBX':
-                    uuids[key] = objs.get(key).get('isa')[3:-10]
+                isa = objs.get(key).get('isa')
+                if isa == 'PBXProject':
+                    uuids[objs.get(key).get('buildConfigurationList')] = 'Build configuration list for PBXProject "{}"'.format(PROJECT_NAME)
+                elif isa == 'PBXNativeTarget':
+                    uuids[objs.get(key).get('buildConfigurationList')] = 'Build configuration list for PBXNativeTarget "{}"'.format(objs.get(key).get('name'))
+                elif isa == 'XCConfigurationList':
+                    uuids[key] = 'Build configuration list for PBXTYPE "TARGET_NAME"'
+                elif isa == 'PBXSourcesBuildPhase':
+                    uuids[key] = "Sources"
+                    for fileguid in objs.get(key).get('files'):
+                        sources.add(fileguid)
+                elif isa == 'PBXResourcesBuildPhase':
+                    uuids[key] = "Resources"
+                    for fileguid in objs.get(key).get('files'):
+                        resources.add(fileguid)
+                elif isa == 'PBXFrameworksBuildPhase':
+                    uuids[key] = "Frameworks"
+                    for fileguid in objs.get(key).get('files'):
+                        frameworks.add(fileguid)
+                elif isa == 'PBXGroup':
+                    pass
+                elif isa == 'PBXBuildFile':
+                    uuids[key] = "(null)"
+                elif isa[0:3] == 'PBX':
+                    uuids[key] = isa
                 else:
-                    uuids[key] = 'Build configuration list for PBXNativeTarget "TARGET_NAME"'
+                    print "Unhandled PBX type '{}', can't create label.".format(isa)
 
         ro = self.data.get('rootObject')
-        uuids[ro] = 'Project Object'
+        uuids[ro] = 'Project object'
 
         for key in objs:
             # transitive references (used in the BuildFile section)
@@ -1186,8 +1212,22 @@ class XcodeProject(PBXDict):
                 uuids[key] = uuids[objs.get(key).get('fileRef')]
 
             # transitive reference to the target name (used in the Native target section)
-            if objs.get(key).get('isa') == 'PBXNativeTarget':
-                uuids[objs.get(key).get('buildConfigurationList')] = uuids[objs.get(key).get('buildConfigurationList')].replace('TARGET_NAME', uuids[key])
+            isa = objs.get(key).get('isa')
+            if isa == 'PBXNativeTarget' or isa == 'PBXAggregateTarget':
+                uuids[objs.get(key).get('buildConfigurationList')] = uuids[objs.get(key).get('buildConfigurationList')].replace('TARGET_NAME', objs.get(key).get('name')).replace('PBXTYPE', isa)
+            if isa == 'PBXProject':
+                uuids[objs.get(key).get('buildConfigurationList')] = uuids[objs.get(key).get('buildConfigurationList')].replace('TARGET_NAME', PROJECT_NAME).replace('PBXTYPE', isa)
+
+        # mark file objects themselves with source comment
+        for key in sources:
+            uuids[key] = uuids[key] + " in Sources"
+
+        for key in resources:
+            uuids[key] =  uuids[key] + " in Resources"
+
+        for key in frameworks:
+            uuids[key] =  uuids[key] + " in Frameworks"
+        # also need to do it in the build phase file refs
 
         self.uuids = uuids
         self.sections = sections
@@ -1199,7 +1239,8 @@ class XcodeProject(PBXDict):
 
     @classmethod
     def addslashes(cls, s):
-        d = {'"': '\\"', "'": "\\'", "\0": "\\\0", "\\": "\\\\", "\n":"\\n"}
+        d = {'"': '\\"', "\0": "\\\0", "\\": "\\\\", "\n":"\\n"}
+#        d = {'"': '\\"', "'": "\\'", "\0": "\\\0", "\\": "\\\\", "\n":"\\n"}
         return ''.join(d.get(c, c) for c in s)
 
     def _printNewXCodeFormat(self, out, root, deep, enters=True):
@@ -1240,24 +1281,26 @@ class XcodeProject(PBXDict):
                         out.write('\n')
                         #root.remove('objects')  # remove it to avoid problems
 
-                    sections = [
+                    sections = [ # section name and whether there are linefeeds in its objects
+                        ('PBXAggregateTarget', True),
                         ('PBXBuildFile', False),
+                        ('PBXContainerItemProxy', True),
                         ('PBXCopyFilesBuildPhase', True),
                         ('PBXFileReference', False),
                         ('PBXFrameworksBuildPhase', True),
                         ('PBXGroup', True),
-                        ('PBXAggregateTarget', True),
                         ('PBXNativeTarget', True),
                         ('PBXProject', True),
+                        ('PBXReferenceProxy', True),
                         ('PBXResourcesBuildPhase', True),
                         ('PBXShellScriptBuildPhase', True),
                         ('PBXSourcesBuildPhase', True),
-                        ('XCBuildConfiguration', True),
-                        ('XCConfigurationList', True),
                         ('PBXTargetDependency', True),
                         ('PBXVariantGroup', True),
-                        ('PBXReferenceProxy', True),
-                        ('PBXContainerItemProxy', True)]
+                        ('XCBuildConfiguration', True),
+                        ('XCConfigurationList', True),
+                        ('XCVersionGroup',True)
+                    ]
 
                     for section in sections:  # iterate over the sections
                         if self.sections.get(section[0]) is None:
@@ -1354,7 +1397,7 @@ class XcodeProject(PBXDict):
     
     @classmethod    
     def LoadFromXML(cls, path):
-    	tree = plistlib.readPlist(path)
+        tree = plistlib.readPlist(path)
         return XcodeProject(tree, path)
 
 
