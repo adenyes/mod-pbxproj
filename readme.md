@@ -38,6 +38,7 @@ You can supply an array of regular expressions for files you want to skip. This 
 If a modification you are trying to apply have already been applied to the project then it will be skipped.  This means that before saving the project you should check the modified flag to make sure changes have occured.
 
     if project.modified:
+        project.project_name = 'ProjectX' # sets the project name used in the save file comments, "Project" by default.
         project.backup()
         project.save() # will save by default using the new xcode 3.2 format
         project.save(old_format=True) # will force to save the project in plist XML format (NOT RECOMMENDED)

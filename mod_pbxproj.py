@@ -46,7 +46,6 @@ from UserDict import IterableUserDict
 from UserList import UserList
 
 regex = '[a-zA-Z0-9\\._/]*'
-PROJECT_NAME = 'Project' # don't know where to get this, set it manually.
 
 class PBXEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -560,6 +559,7 @@ class XCConfigurationList(PBXType):
 
 
 class XcodeProject(PBXDict):
+    project_name = 'Project'
     plutil_path = 'plutil'
     special_folders = ['.bundle', '.framework', '.xcodeproj']
 
@@ -1177,7 +1177,7 @@ class XcodeProject(PBXDict):
             else:
                 isa = objs.get(key).get('isa')
                 if isa == 'PBXProject':
-                    uuids[objs.get(key).get('buildConfigurationList')] = 'Build configuration list for PBXProject "{}"'.format(PROJECT_NAME)
+                    uuids[objs.get(key).get('buildConfigurationList')] = 'Build configuration list for PBXProject "{}"'.format(self.project_name)
                 elif isa == 'PBXNativeTarget':
                     uuids[objs.get(key).get('buildConfigurationList')] = 'Build configuration list for PBXNativeTarget "{}"'.format(objs.get(key).get('name'))
                 elif isa == 'XCConfigurationList':
@@ -1216,7 +1216,7 @@ class XcodeProject(PBXDict):
             if isa == 'PBXNativeTarget' or isa == 'PBXAggregateTarget':
                 uuids[objs.get(key).get('buildConfigurationList')] = uuids[objs.get(key).get('buildConfigurationList')].replace('TARGET_NAME', objs.get(key).get('name')).replace('PBXTYPE', isa)
             if isa == 'PBXProject':
-                uuids[objs.get(key).get('buildConfigurationList')] = uuids[objs.get(key).get('buildConfigurationList')].replace('TARGET_NAME', PROJECT_NAME).replace('PBXTYPE', isa)
+                uuids[objs.get(key).get('buildConfigurationList')] = uuids[objs.get(key).get('buildConfigurationList')].replace('TARGET_NAME', self.project_name).replace('PBXTYPE', isa)
 
         # mark file objects themselves with source comment
         for key in sources:
