@@ -45,7 +45,7 @@ import uuid
 from UserDict import IterableUserDict
 from UserList import UserList
 
-regex = '[a-zA-Z0-9\\._/-]*'
+regex = '[a-zA-Z0-9\\._/]*'
 
 
 class PBXEncoder(json.JSONEncoder):
@@ -578,6 +578,7 @@ class XCConfigurationList(PBXType):
 
 
 class XcodeProject(PBXDict):
+    project_name = 'Project'
     plutil_path = 'plutil'
     special_folders = ['.bundle', '.framework', '.xcodeproj', '.xcassets', '.xcdatamodeld']
 
@@ -1281,40 +1282,70 @@ class XcodeProject(PBXDict):
         # process to get the section's info and names
         objs = self.data.get('objects')
         sections = dict()
-        uuids = dict()
+        uuids = dict()  # map from UUID to the comment to put next to it in the pbxproj.
+        comment_annotations = dict()
 
-        for key in objs:
-            l = list()
+        def get_friendly_name(obj):
+            if 'name' in obj:
+                return obj.get('name')
+            elif 'path' in obj:
+                return obj.get('path')
+            elif 'isa' in obj:
+                isa = obj.get('isa')
 
-            if objs.get(key).get('isa') in sections:
-                l = sections.get(objs.get(key).get('isa'))
+                if(isa == 'PBXGroup'):
+                    return None
 
-            l.append(tuple([key, objs.get(key)]))
-            sections[objs.get(key).get('isa')] = l
+                if(isa == 'PBXBuildFile'):
+                    return '(null)'
 
-            if 'name' in objs.get(key):
-                uuids[key] = objs.get(key).get('name')
-            elif 'path' in objs.get(key):
-                uuids[key] = objs.get(key).get('path')
-            else:
-                if objs.get(key).get('isa') == 'PBXProject':
-                    uuids[objs.get(key).get('buildConfigurationList')] = 'Build configuration list for PBXProject "Unity-iPhone"'
-                elif objs.get(key).get('isa')[0:3] == 'PBX':
-                    uuids[key] = objs.get(key).get('isa')[3:-10]
+                m = re.search('PBX(.+?)BuildPhase', isa)
+                if m:
+                    return m.group(1)
                 else:
-                    uuids[key] = 'Build configuration list for PBXNativeTarget "TARGET_NAME"'
+                    return isa
+            return None
+
+        def annotate_files(key, annotation):
+            if 'files' in objs.get(key):
+                for fileguid in objs.get(key).get('files'):
+                    comment_annotations[fileguid] = annotation
+
+        for uuid, obj in objs.iteritems():
+
+            isa = obj.get('isa')
+
+            if isa not in sections:
+                sections[isa] = list()
+
+            sections[isa].append(tuple([uuid, obj]))
+
+            friendlyName = get_friendly_name(obj)
+
+            if friendlyName:
+                uuids[uuid] = friendlyName
+                annotate_files(uuid, friendlyName)
 
         ro = self.data.get('rootObject')
         uuids[ro] = 'Project object'
 
-        for key in objs:
+        for uuid, obj in objs.iteritems():
             # transitive references (used in the BuildFile section)
-            if 'fileRef' in objs.get(key) and objs.get(key).get('fileRef') in uuids:
-                uuids[key] = uuids[objs.get(key).get('fileRef')]
+            if 'fileRef' in obj and obj.get('fileRef') in uuids:
+                uuids[uuid] = uuids[obj.get('fileRef')]
 
             # transitive reference to the target name (used in the Native target section)
-            if objs.get(key).get('isa') == 'PBXNativeTarget':
-                uuids[objs.get(key).get('buildConfigurationList')] = uuids[objs.get(key).get('buildConfigurationList')].replace('TARGET_NAME', uuids[key])
+            isa = obj.get('isa')
+            if isa == 'PBXNativeTarget' or isa == 'PBXAggregateTarget':
+                uuids[obj.get('buildConfigurationList')] = 'Build configuration list for {0} "{1}"'.format(isa, obj.get('name'))
+            if isa == 'PBXProject':
+                uuids[obj.get('buildConfigurationList')] = 'Build configuration list for {0} "{1}"'.format(isa, self.project_name)
+
+        # mark file objects themselves with source comment
+        for fileguid in comment_annotations:
+            uuids[fileguid] = uuids[fileguid] + " in " + comment_annotations[fileguid]
+
+        # also need to do it in the build phase file refs
 
         self.uuids = uuids
         self.sections = sections
@@ -1322,14 +1353,15 @@ class XcodeProject(PBXDict):
         out = open(file_name, 'w')
         out.write('// !$*UTF8*$!\n')
         self._printNewXCodeFormat(out, self.data, '', enters=True, sort=sort)
+        out.write('\n') # terminal linefeed
         out.close()
 
     @classmethod
     def addslashes(cls, s):
-        d = {'"': '\\"', "'": "\\'", "\0": "\\\0", "\\": "\\\\", "\n":"\\n"}
+        d = {'"': '\\"',             "\0": "\\\0", "\\": "\\\\", "\n":"\\n"}
         return ''.join(d.get(c, c) for c in s)
 
-    def _printNewXCodeFormat(self, out, root, deep, enters=True, sort=False):
+    def _printNewXCodeFormat(self, out, root, deep, enters=True, sort=False, add_comment=True):
         if isinstance(root, IterableUserDict):
             out.write('{')
 
@@ -1357,6 +1389,9 @@ class XcodeProject(PBXDict):
 
                 if re.match(regex, key).group(0) == key:
                     out.write(key.encode("utf-8") + ' = ')
+
+                    if(key in ['TestTargetID', 'remoteGlobalIDString']): # these keys specifically don't have their target comment.
+                        add_comment = False
                 else:
                     out.write('"' + key.encode("utf-8") + '" = ')
 
@@ -1367,25 +1402,27 @@ class XcodeProject(PBXDict):
                         out.write('\n')
                         #root.remove('objects')  # remove it to avoid problems
 
-                    sections = [
+                    sections = [  # section name and whether there are linefeeds in its objects
+                        ('PBXAggregateTarget', True),
                         ('PBXBuildFile', False),
+                        ('PBXContainerItemProxy', True),
                         ('PBXCopyFilesBuildPhase', True),
                         ('PBXFileReference', False),
                         ('PBXFrameworksBuildPhase', True),
                         ('PBXGroup', True),
-                        ('PBXAggregateTarget', True),
+                        ('PBXHeadersBuildPhase', True),
                         ('PBXNativeTarget', True),
                         ('PBXProject', True),
+                        ('PBXReferenceProxy', True),
                         ('PBXResourcesBuildPhase', True),
                         ('PBXShellScriptBuildPhase', True),
                         ('PBXSourcesBuildPhase', True),
-                        ('XCBuildConfiguration', True),
-                        ('XCConfigurationList', True),
                         ('PBXTargetDependency', True),
                         ('PBXVariantGroup', True),
-                        ('PBXReferenceProxy', True),
-                        ('PBXContainerItemProxy', True),
-                        ('XCVersionGroup', True)]
+                        ('XCBuildConfiguration', True),
+                        ('XCConfigurationList', True),
+                        ('XCVersionGroup', True)
+                    ]
 
                     for section in sections:  # iterate over the sections
                         if self.sections.get(section[0]) is None:
@@ -1409,7 +1446,7 @@ class XcodeProject(PBXDict):
 
                             out.write(key.encode("utf-8"))
 
-                            if key in self.uuids:
+                            if add_comment and key in self.uuids:
                                 out.write(" /* " + self.uuids[key].encode("utf-8") + " */")
 
                             out.write(" = ")
@@ -1420,7 +1457,7 @@ class XcodeProject(PBXDict):
 
                     out.write(deep + '\t}')  # close of the objects section
                 else:
-                    self._printNewXCodeFormat(out, root[key], '\t' + deep, enters=enters)
+                    self._printNewXCodeFormat(out, root[key], '\t' + deep, enters=enters, add_comment=add_comment)
 
                 out.write(';')
 
@@ -1451,6 +1488,8 @@ class XcodeProject(PBXDict):
 
                 if enters:
                     out.write('\n')
+                else:
+                    out.write(' ')
 
             if enters:
                 out.write(deep)
@@ -1463,7 +1502,7 @@ class XcodeProject(PBXDict):
             else:
                 out.write('"' + XcodeProject.addslashes(root.encode("utf-8")) + '"')
 
-            if root in self.uuids:
+            if add_comment and root in self.uuids:
                 out.write(" /* " + self.uuids[root].encode("utf-8") + " */")
 
     @classmethod
