@@ -41,6 +41,7 @@ import re
 import shutil
 import subprocess
 import uuid
+import string
 
 from UserDict import IterableUserDict
 from UserList import UserList
@@ -582,12 +583,19 @@ class XcodeProject(PBXDict):
     plutil_path = 'plutil'
     special_folders = ['.bundle', '.framework', '.xcodeproj', '.xcassets', '.xcdatamodeld']
 
+    def get_project_name_from_pbx_path(pbxfile):
+        xcodeproj = os.path.split(os.path.split(pbxfile)[0])[1]
+        if xcodeproj.endswith(".xcodeproj"):
+            return string.capwords(os.path.splitext(xcodeproj)[0],'-').replace('-','')
+
+
     def __init__(self, d=None, path=None):
         if not path:
             path = os.path.join(os.getcwd(), 'project.pbxproj')
 
         self.pbxproj_path = os.path.abspath(path)
         self.source_root = os.path.abspath(os.path.join(os.path.split(path)[0], '..'))
+        self.project_name = self.get_project_name_from_pbx_path(self.pbxproj_path)
 
         IterableUserDict.__init__(self, d)
 
