@@ -583,10 +583,10 @@ class XcodeProject(PBXDict):
     plutil_path = 'plutil'
     special_folders = ['.bundle', '.framework', '.xcodeproj', '.xcassets', '.xcdatamodeld']
 
-    def get_project_name_from_pbx_path(pbxfile):
+    def get_project_name_from_pbx_path(self, pbxfile):
         xcodeproj = os.path.split(os.path.split(pbxfile)[0])[1]
         if xcodeproj.endswith(".xcodeproj"):
-            return string.capwords(os.path.splitext(xcodeproj)[0],'-').replace('-','')
+            return os.path.splitext(xcodeproj)[0]
 
 
     def __init__(self, d=None, path=None):

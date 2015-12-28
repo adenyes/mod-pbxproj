@@ -30,18 +30,17 @@ import sys, os, string
 
 class Parsing(unittest.TestCase):
     def testParsingPurePython(self):
-        for file in ['music-cube', 'metal-image-processing', 'collection-view', 'cloud-search']:
-            result = XcodeProject.Load('tests/samples/{0}.pbxproj'.format(file), pure_python=True)
-            control = osp.OpenStepDecoder.ParseFromFile(open('tests/samples/{0}.pbxproj'.format(file)))
+        for file in ['MusicCube', 'MetalImageProcessing', 'CollectionView', 'CloudSearch']:
+            result = XcodeProject.Load('tests/samples/{0}.xcodeproj/project.pbxproj'.format(file), pure_python=True)
+            control = osp.OpenStepDecoder.ParseFromFile(open('tests/samples/{0}.xcodeproj/project.pbxproj'.format(file)))
             assert result.data == control
 
 class Saving(unittest.TestCase):
     def testSaving(self):
-        for file in ['music-cube', 'metal-image-processing', 'collection-view', 'cloud-search']:
-            pbxpathin = 'tests/samples/{0}.pbxproj'.format(file)
+        for file in ['MusicCube', 'MetalImageProcessing', 'CollectionView', 'CloudSearch']:
+            pbxpathin = 'tests/samples/{0}.xcodeproj/project.pbxproj'.format(file)
             pbxpathout = 'tests/samples/{0}.out.pbxproj'.format(file)
             pbx = XcodeProject.Load(pbxpathin) # TODO: pure_python=True fails when parsing "$(inherits)"
-            pbx.project_name = string.capwords(file,'-').replace('-','') # Set the project name to properly populate comments
             pbx.save(pbxpathout)
             fromlines = open(pbxpathin, 'U').readlines()
             tolines = open(pbxpathout, 'U').readlines()
